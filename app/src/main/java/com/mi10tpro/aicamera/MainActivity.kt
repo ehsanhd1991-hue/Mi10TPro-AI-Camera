@@ -1,15 +1,20 @@
 package com.mi10tpro.aicamera
 
 import android.Manifest
+import android.content.ContentValues
 import android.os.Bundle
+import android.provider.MediaStore
 import android.widget.*
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
 
@@ -17,12 +22,12 @@ class MainActivity : ComponentActivity() {
     private lateinit var status: TextView
 
     private var camera: Camera? = null
+    private var imageCapture: ImageCapture? = null
 
     private val permissionLauncher =
         registerForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { granted ->
-
             if (granted) {
                 bindCamera()
             } else {
@@ -84,8 +89,7 @@ class MainActivity : ComponentActivity() {
             text = "Capture with AI"
 
             setOnClickListener {
-                status.text =
-                    "AI pipeline ready"
+                capturePhoto()
             }
         }
 
@@ -99,16 +103,13 @@ class MainActivity : ComponentActivity() {
                     progress: Int,
                     fromUser: Boolean
                 ) {
-
-                    val ratio =
-                        1f + progress / 10f
+                    val ratio = 1f + progress / 10f
 
                     camera?.cameraControl
                         ?.setZoomRatio(ratio)
 
                     status.text =
-                        "AI Super Zoom • %.1fx"
-                            .format(ratio)
+                        "AI Super Zoom • %.1fx".format(ratio)
                 }
 
                 override fun onStartTrackingTouch(
@@ -131,30 +132,106 @@ class MainActivity : ComponentActivity() {
     private fun bindCamera() {
 
         val cameraProviderFuture =
-            ProcessCameraProvider
-                .getInstance(this)
+            ProcessCameraProvider.getInstance(this)
 
         cameraProviderFuture.addListener({
 
-            val provider =
-                cameraProviderFuture.get()
+            try {
+                val provider =
+                    cameraProviderFuture.get()
 
-            val previewUseCase =
-                Preview.Builder()
-                    .build()
+                val previewUseCase =
+                    Preview.Builder()
+                        .build()
 
-            previewUseCase.surfaceProvider =
-                preview.surfaceProvider
+                previewUseCase.surfaceProvider =
+                    preview.surfaceProvider
 
-            provider.unbindAll()
+                imageCapture =
+                    ImageCapture.Builder()
+                        .setCaptureMode(
+                            ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+                        )
+                        .build()
 
-            camera =
-                provider.bindToLifecycle(
-                    this,
-                    CameraSelector.DEFAULT_BACK_CAMERA,
-                    previewUseCase
-                )
+                provider.unbindAll()
 
-        }, mainExecutor)
+                camera =
+                    provider.bindToLifecycle(
+                        this,
+                        CameraSelector.DEFAULT_BACK_CAMERA,
+                        previewUseCase,
+                        imageCapture
+                    )
+
+                status.text = "AI Super Zoom • Camera Ready"
+
+            } catch (e: Exception) {
+                status.text =
+                    "Camera error: ${e.message}"
+            }
+
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun capturePhoto() {
+
+        val capture = imageCapture
+
+        if (capture == null) {
+            status.text = "Camera is not ready"
+            return
+        }
+
+        status.text = "Capturing..."
+
+        val fileName =
+            "AI_Camera_${System.currentTimeMillis()}.jpg"
+
+        val contentValues = ContentValues().apply {
+            put(
+                MediaStore.Images.Media.DISPLAY_NAME,
+                fileName
+            )
+
+            put(
+                MediaStore.Images.Media.MIME_TYPE,
+                "image/jpeg"
+            )
+
+            put(
+                MediaStore.Images.Media.RELATIVE_PATH,
+                "Pictures/Mi10TPro AI Camera"
+            )
+        }
+
+        val outputOptions =
+            ImageCapture.OutputFileOptions.Builder(
+                contentResolver,
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                contentValues
+            ).build()
+
+        capture.takePicture(
+            outputOptions,
+            ContextCompat.getMainExecutor(this),
+            object : ImageCapture.OnImageSavedCallback {
+
+                override fun onImageSaved(
+                    outputFileResults:
+                    ImageCapture.OutputFileResults
+                ) {
+                    status.text =
+                        "✓ Photo saved to Gallery"
+                }
+
+                override fun onError(
+                    exception: ImageCaptureException
+                ) {
+                    status.text =
+                        "Capture error: ${exception.message}"
+                }
+            }
+        )
     }
 }
