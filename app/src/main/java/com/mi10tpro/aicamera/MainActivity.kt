@@ -15,14 +15,18 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var preview: PreviewView
     private lateinit var status: TextView
+    private lateinit var zoomSlider: SeekBar
 
     private var camera: Camera? = null
     private var imageCapture: ImageCapture? = null
+
+    private var maxZoomRatio = 1f
 
     private val permissionLauncher =
         registerForActivityResult(
@@ -38,12 +42,24 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        createInterface()
+
+        permissionLauncher.launch(
+            Manifest.permission.CAMERA
+        )
+    }
+
+    private fun createInterface() {
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xFF000000.toInt())
         }
 
         preview = PreviewView(this)
+
+        preview.scaleType =
+            PreviewView.ScaleType.FILL_CENTER
 
         root.addView(
             preview,
@@ -55,7 +71,7 @@ class MainActivity : ComponentActivity() {
         )
 
         status = TextView(this).apply {
-            text = "AI Super Zoom • Ready"
+            text = "AI Super Zoom • Starting..."
             textSize = 17f
             setTextColor(0xFFFFFFFF.toInt())
             setPadding(18, 12, 18, 8)
@@ -63,8 +79,8 @@ class MainActivity : ComponentActivity() {
 
         root.addView(status)
 
-        val zoomSlider = SeekBar(this).apply {
-            max = 190
+        zoomSlider = SeekBar(this).apply {
+            max = 100
             progress = 0
         }
 
@@ -86,6 +102,7 @@ class MainActivity : ComponentActivity() {
         root.addView(modeSpinner)
 
         val captureButton = Button(this).apply {
+
             text = "Capture with AI"
 
             setOnClickListener {
@@ -103,30 +120,41 @@ class MainActivity : ComponentActivity() {
                     progress: Int,
                     fromUser: Boolean
                 ) {
-                    val ratio = 1f + progress / 10f
+
+                    if (maxZoomRatio <= 1f) {
+                        return
+                    }
+
+                    val ratio =
+                        1f +
+                            (maxZoomRatio - 1f) *
+                            progress / 100f
 
                     camera?.cameraControl
                         ?.setZoomRatio(ratio)
 
                     status.text =
-                        "AI Super Zoom • %.1fx".format(ratio)
+                        String.format(
+                            Locale.US,
+                            "AI Super Zoom • %.1fx / %.1fx",
+                            ratio,
+                            maxZoomRatio
+                        )
                 }
 
                 override fun onStartTrackingTouch(
                     seekBar: SeekBar?
-                ) {}
+                ) {
+                }
 
                 override fun onStopTrackingTouch(
                     seekBar: SeekBar?
-                ) {}
+                ) {
+                }
             }
         )
 
         setContentView(root)
-
-        permissionLauncher.launch(
-            Manifest.permission.CAMERA
-        )
     }
 
     private fun bindCamera() {
@@ -137,6 +165,7 @@ class MainActivity : ComponentActivity() {
         cameraProviderFuture.addListener({
 
             try {
+
                 val provider =
                     cameraProviderFuture.get()
 
@@ -147,11 +176,19 @@ class MainActivity : ComponentActivity() {
                 previewUseCase.surfaceProvider =
                     preview.surfaceProvider
 
+                /*
+                 * MAXIMIZE_QUALITY به جای
+                 * MINIMIZE_LATENCY
+                 *
+                 * هدف این پروژه کیفیت تصویر است،
+                 * نه سرعت ثبت عکس.
+                 */
                 imageCapture =
                     ImageCapture.Builder()
                         .setCaptureMode(
-                            ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+                            ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
                         )
+                        .setJpegQuality(100)
                         .build()
 
                 provider.unbindAll()
@@ -164,9 +201,27 @@ class MainActivity : ComponentActivity() {
                         imageCapture
                     )
 
-                status.text = "AI Super Zoom • Camera Ready"
+                /*
+                 * حداکثر زوم واقعی CameraX
+                 */
+                maxZoomRatio =
+                    camera?.cameraInfo
+                        ?.zoomState
+                        ?.value
+                        ?.maxZoomRatio
+                        ?: 1f
+
+                zoomSlider.progress = 0
+
+                status.text =
+                    String.format(
+                        Locale.US,
+                        "Camera Ready • Max Zoom %.1fx",
+                        maxZoomRatio
+                    )
 
             } catch (e: Exception) {
+
                 status.text =
                     "Camera error: ${e.message}"
             }
@@ -179,31 +234,37 @@ class MainActivity : ComponentActivity() {
         val capture = imageCapture
 
         if (capture == null) {
-            status.text = "Camera is not ready"
+
+            status.text =
+                "Camera is not ready"
+
             return
         }
 
-        status.text = "Capturing..."
+        status.text =
+            "Capturing high quality image..."
 
         val fileName =
             "AI_Camera_${System.currentTimeMillis()}.jpg"
 
-        val contentValues = ContentValues().apply {
-            put(
-                MediaStore.Images.Media.DISPLAY_NAME,
-                fileName
-            )
+        val contentValues =
+            ContentValues().apply {
 
-            put(
-                MediaStore.Images.Media.MIME_TYPE,
-                "image/jpeg"
-            )
+                put(
+                    MediaStore.Images.Media.DISPLAY_NAME,
+                    fileName
+                )
 
-            put(
-                MediaStore.Images.Media.RELATIVE_PATH,
-                "Pictures/Mi10TPro AI Camera"
-            )
-        }
+                put(
+                    MediaStore.Images.Media.MIME_TYPE,
+                    "image/jpeg"
+                )
+
+                put(
+                    MediaStore.Images.Media.RELATIVE_PATH,
+                    "Pictures/Mi10TPro AI Camera"
+                )
+            }
 
         val outputOptions =
             ImageCapture.OutputFileOptions.Builder(
@@ -215,19 +276,23 @@ class MainActivity : ComponentActivity() {
         capture.takePicture(
             outputOptions,
             ContextCompat.getMainExecutor(this),
-            object : ImageCapture.OnImageSavedCallback {
+
+            object :
+                ImageCapture.OnImageSavedCallback {
 
                 override fun onImageSaved(
                     outputFileResults:
                     ImageCapture.OutputFileResults
                 ) {
+
                     status.text =
-                        "✓ Photo saved to Gallery"
+                        "✓ High-quality photo saved"
                 }
 
                 override fun onError(
                     exception: ImageCaptureException
                 ) {
+
                     status.text =
                         "Capture error: ${exception.message}"
                 }
